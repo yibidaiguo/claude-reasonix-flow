@@ -168,6 +168,11 @@ def run_doctor(cli: Path, root: Path) -> int:
 
 
 def main() -> int:
+    # 三个流都必须钉成 UTF-8。Windows 上默认是 GBK：
+    # - stdin 不钉，管道进来的中文任务会被按 GBK 解码打碎，模型收到的是残句；
+    # - stdout/stderr 不钉，Reasonix 返回的中文和账单行写出去会抛 UnicodeEncodeError。
+    # 这三个都踩过，别删。
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
