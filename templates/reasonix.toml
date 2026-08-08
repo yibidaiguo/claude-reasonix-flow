@@ -1,0 +1,54 @@
+# 项目级 Reasonix 配置模板。复制到项目根，按这个项目的实际门禁改 allow 列表。
+#
+# 解析顺序：flag > ./reasonix.toml > <Reasonix home>/config.toml > 内置默认。
+# 这里只放项目边界，**不放任何密钥**——密钥走 api_key_env，存在 Reasonix 的全局 .env。
+#
+# 为什么每个项目都要有这个文件：Claude 会用 `reasonix subagent run` 无头驱动 Reasonix。
+# 无头进程弹不出审批框，而默认 mode = "ask" 加零条规则会让它一路卡到超时。
+
+[permissions]
+# 兜底：没命中任何规则的写操作仍然要问。放行的只有下面列出的。
+mode = "ask"
+
+allow = [
+    # ── 这个项目的门禁命令，按实际情况替换 ────────────────────────────
+    #
+    # Windows 上两种斜杠都要列：Reasonix 的 bash 工具走 Git Bash，
+    # 反斜杠路径会被 shell 吞掉，实际执行的是正斜杠形式。
+    #
+    # Python 项目示例：
+    # 'Bash(.venv\Scripts\python.exe -m pytest:*)',
+    # 'Bash(.venv/Scripts/python.exe -m pytest:*)',
+    # 'Bash(.venv\Scripts\python.exe -m ruff:*)',
+    # 'Bash(.venv/Scripts/python.exe -m ruff:*)',
+    #
+    # Node 项目示例：
+    # 'Bash(npm run lint:*)',
+    # 'Bash(npm run build:*)',
+    # 'Bash(npm test:*)',
+    #
+    # Go 项目示例：
+    # 'Bash(go test:*)',
+    # 'Bash(go vet:*)',
+
+    # ── 只读 git，基本每个项目都要 ──────────────────────────────────
+    'Bash(git status:*)',
+    'Bash(git diff:*)',
+    'Bash(git log:*)',
+    'Bash(git show:*)',
+    'Bash(git branch:*)',
+    'Bash(git rev-parse:*)',
+    'Bash(git ls-files:*)',
+
+    # ── 提交，到此为止 ─────────────────────────────────────────────
+    'Bash(git add:*)',
+    'Bash(git commit:*)',
+]
+
+deny = [
+    # 全局 config.toml 里也该有一份同样的兜底。这里再钉一次，
+    # 万一哪天全局配置被重置，项目这层还拦得住。
+    'Bash(rm -rf*)',
+    'Bash(git clean*)',
+    'Bash(git push*)',
+]

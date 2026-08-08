@@ -1,0 +1,10 @@
+# install.ps1 覆盖前留下的备份
+*.bak
+
+# 绝不入库：任何形式的密钥
+.env
+*.key
+*.pem
+
+__pycache__/
+*.pyc
