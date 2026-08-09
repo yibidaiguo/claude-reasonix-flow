@@ -14,8 +14,9 @@
 
 常用开关：
     --dir PATH         项目根，默认从当前目录往上找 .git / 项目指令文件
-    --model NAME       provider 名，默认 reasonix 配置里的 default_model
+    --model REF        provider/model，默认 reasonix 配置里的 default_model
     --max-steps N      卡工具调用轮数，防跑飞
+    --max-chars N      裁剪回给调用方的正文，0 = 不裁（默认）。见下方"成本在哪一侧"
     --permission-mode  manual|ask|auto|acceptEdits|dontAsk|bypassPermissions
                        无头调用不能用 plan（它要交互式会话）
     --timeout SEC      墙钟超时，默认 1800
@@ -25,7 +26,14 @@
 2. 无头调用必须显式给 --permission-mode，否则会卡在等审批上直到超时。
 3. 返回是 JSON 信封，得挑出 result 字段、按 is_error 定退出码，顺便把花费打出来。
 
-成本提醒：一次调用光系统提示和环境摘要就 ~24k 输入 token。派活要合并，别拆碎。
+成本在哪一侧：Reasonix 跑的是 deepseek 档（¥1~¥3 每 M 输入），一次调用的 ~24k
+系统提示合人民币几分钱。真正贵的是**调用方**（Claude）的上下文——子代理返回的每
+一个字都会进那边，并在后续每轮重发。所以省钱的手段不是少派活、把任务合并成大块，
+而是**控制回流的正文长度**：用 --max-chars 裁 implementer 那种啰嗦的叙述型返回。
+
+--max-chars 默认关闭，必须显式打开。理由是漏裁只多花钱，误裁会吃掉失败证据——
+verifier 的返回（一张表加 FAIL 原文）本来就是压缩过的，别给它设上限。
+裁掉的部分不会丢，完整正文落到临时文件，路径打在 [rx] 那行里。
 """
 
 from __future__ import annotations
@@ -36,6 +44,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 # 项目根的判定依据，按优先级。找不到就用当前目录。
@@ -112,23 +122,48 @@ def build_argv(args: argparse.Namespace, cli: Path, root: Path, task: str) -> li
     return argv
 
 
-def report(payload: dict) -> int:
+def clip(text: str, limit: int) -> tuple[str, Path | None]:
+    """超长正文保头保尾、中间折叠，完整版落到临时文件。
+
+    尾部留得比头部多：implementer 的返回是按"改了哪些文件 → 证据 → 没做的部分 →
+    新发现的 Bug → 撞到的约束冲突"排的，越靠后越是调用方必须看到的东西。
+    """
+    if limit <= 0 or len(text) <= limit:
+        return text, None
+
+    fd, name = tempfile.mkstemp(prefix="rx-out-", suffix=".txt")
+    with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as f:
+        f.write(text)
+    full = Path(name)
+
+    head = limit * 2 // 5
+    tail = limit - head
+    dropped = len(text) - limit
+    fold = f"\n\n... [rx 折叠了中间 {dropped} 字，完整正文见 {full}] ...\n\n"
+    return text[:head] + fold + text[-tail:], full
+
+
+def report(payload: dict, max_chars: int = 0) -> int:
     """把 JSON 信封拆开：正文给人看，账单单独一行，错误走 stderr。"""
     text = (payload.get("result") or "").strip()
     usage = payload.get("usage") or {}
 
     if payload.get("is_error"):
+        # 失败正文不裁——那正是调用方要看的东西。
         print(f"Reasonix 执行失败：{text}", file=sys.stderr)
         return 1
 
-    if text:
-        print(text)
+    body, full = clip(text, max_chars)
+    if body:
+        print(body)
 
     bill = [
         f"in={usage.get('input_tokens', 0)}",
         f"out={usage.get('output_tokens', 0)}",
         f"cache_read={usage.get('cache_read_input_tokens', 0)}",
     ]
+    if full:
+        bill.append(f"full={full}")
     if payload.get("total_cost_usd") is not None:
         bill.append(f"cost=${payload['total_cost_usd']}")
     if payload.get("session_id"):
@@ -191,6 +226,7 @@ def main() -> int:
     for p in (p_sub, p_run):
         p.add_argument("--model", default=None)
         p.add_argument("--max-steps", type=int, default=0)
+        p.add_argument("--max-chars", type=int, default=0)
         p.add_argument("--permission-mode", default=DEFAULT_PERMISSION_MODE)
         p.add_argument("--timeout", type=int, default=1800)
     for p in (p_sub, p_run, p_doc):
@@ -210,6 +246,7 @@ def main() -> int:
     if not task:
         raise SystemExit("任务是空的")
 
+    started = time.monotonic()
     try:
         proc = subprocess.run(
             build_argv(args, cli, root, task),
@@ -222,19 +259,32 @@ def main() -> int:
     except subprocess.TimeoutExpired:
         print(f"Reasonix 超时（{args.timeout}s）未返回，已放弃。", file=sys.stderr)
         return 1
+    elapsed = time.monotonic() - started
 
     stdout = (proc.stdout or "").strip()
 
     # subagent run 是纯文本输出，run --output-format json 才是信封。
     if args.mode == "sub":
-        if stdout:
-            print(stdout)
+        body, full = clip(stdout, args.max_chars)
+        if body:
+            print(body)
         if proc.returncode != 0:
             print((proc.stderr or "").strip(), file=sys.stderr)
+        # subagent run 不支持 --output-format json，拿不到 usage/cost 信封，
+        # 所以这里只能给出规模和耗时，报不了钱。要账单就得走 run 模式。
+        meter = [
+            f"agent={args.name}",
+            f"chars={len(stdout)}",
+            f"elapsed={elapsed:.0f}s",
+            f"exit={proc.returncode}",
+        ]
+        if full:
+            meter.append(f"full={full}")
+        print(f"\n[rx] {' '.join(meter)}", file=sys.stderr)
         return proc.returncode
 
     try:
-        return report(json.loads(stdout))
+        return report(json.loads(stdout), args.max_chars)
     except json.JSONDecodeError:
         print(stdout or "(Reasonix 没有任何输出)")
         print((proc.stderr or "").strip(), file=sys.stderr)
