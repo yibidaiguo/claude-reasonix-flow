@@ -8,20 +8,27 @@ $ErrorActionPreference = "Stop"
 $repo = $PSScriptRoot
 $home_ = [Environment]::GetFolderPath("UserProfile")
 
+# 和 install.ps1 一致：Codex 家目录可以被 CODEX_HOME 挪走。
+$codexHome = $env:CODEX_HOME
+if (-not $codexHome) { $codexHome = Join-Path $home_ ".codex" }
+
+# 注意：rx.py 在 Codex 侧只是一份副本，权威在 claude\scripts\rx.py。
+# 这里不从 Codex 侧收回 rx.py，免得两个来源打架。
 $pairs = @(
-    @{ repoPath = "claude\skills\dev-cycle\SKILL.md";   livePath = ".claude\skills\dev-cycle\SKILL.md" },
-    @{ repoPath = "claude\scripts\rx.py";               livePath = ".claude\scripts\rx.py" },
-    @{ repoPath = "agents\skills\implementer\SKILL.md"; livePath = ".agents\skills\implementer\SKILL.md" },
-    @{ repoPath = "agents\skills\verifier\SKILL.md";    livePath = ".agents\skills\verifier\SKILL.md" }
+    @{ repoPath = "claude\skills\dev-cycle\SKILL.md";   root = $home_;     livePath = ".claude\skills\dev-cycle\SKILL.md" },
+    @{ repoPath = "claude\scripts\rx.py";               root = $home_;     livePath = ".claude\scripts\rx.py" },
+    @{ repoPath = "agents\skills\implementer\SKILL.md"; root = $home_;     livePath = ".agents\skills\implementer\SKILL.md" },
+    @{ repoPath = "agents\skills\verifier\SKILL.md";    root = $home_;     livePath = ".agents\skills\verifier\SKILL.md" },
+    @{ repoPath = "codex\skills\dev-cycle\SKILL.md";    root = $codexHome; livePath = "skills\dev-cycle\SKILL.md" }
 )
 
 $changed = 0
 foreach ($p in $pairs) {
-    $live = Join-Path $home_ $p.livePath
+    $live = Join-Path $p.root $p.livePath
     $dst  = Join-Path $repo $p.repoPath
 
     if (-not (Test-Path $live)) {
-        Write-Host "本机上没有，跳过: $($p.livePath)" -ForegroundColor Yellow
+        Write-Host "本机上没有，跳过: $live" -ForegroundColor Yellow
         continue
     }
     if ((Test-Path $dst) -and (Get-FileHash $live).Hash -eq (Get-FileHash $dst).Hash) {
