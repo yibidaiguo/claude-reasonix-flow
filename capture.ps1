@@ -1,4 +1,4 @@
-# 把本机上改过的配置同步回仓库（install.ps1 的反方向）。
+﻿# 把本机上改过的配置同步回仓库（install.ps1 的反方向）。
 #
 # 用途：你在 ~/.claude 或 ~/.agents 里直接改了文件，想把改动收回版本控制。
 #
@@ -12,13 +12,14 @@ $home_ = [Environment]::GetFolderPath("UserProfile")
 $codexHome = $env:CODEX_HOME
 if (-not $codexHome) { $codexHome = Join-Path $home_ ".codex" }
 
-# 注意：rx.py 在 Codex 侧只是一份副本，权威在 claude\scripts\rx.py。
-# 这里不从 Codex 侧收回 rx.py，免得两个来源打架。
+# 注意：rx.py 和 roles\explore.md 在 Codex 侧只是副本，权威在 ~/.claude 那份。
+# 这里不从 Codex 侧收回这两个，免得两个来源打架。
 $pairs = @(
     @{ repoPath = "claude\skills\dev-cycle\SKILL.md";   root = $home_;     livePath = ".claude\skills\dev-cycle\SKILL.md" },
     @{ repoPath = "claude\scripts\rx.py";               root = $home_;     livePath = ".claude\scripts\rx.py" },
     @{ repoPath = "agents\skills\implementer\SKILL.md"; root = $home_;     livePath = ".agents\skills\implementer\SKILL.md" },
     @{ repoPath = "agents\skills\verifier\SKILL.md";    root = $home_;     livePath = ".agents\skills\verifier\SKILL.md" },
+    @{ repoPath = "roles\explore.md";                   root = $home_;     livePath = ".claude\roles\explore.md" },
     @{ repoPath = "codex\skills\dev-cycle\SKILL.md";    root = $codexHome; livePath = "skills\dev-cycle\SKILL.md" }
 )
 

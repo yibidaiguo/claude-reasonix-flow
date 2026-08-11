@@ -1,11 +1,15 @@
 ---
 name: dev-cycle
-description: 由你做设计审查和验收，把写代码和跑门禁派给 Reasonix 子代理执行。当用户说"帮我做 XXX 功能""改一下 XXX""修 BUG-XXXX"这类需要动代码的活，或直接打 /dev-cycle 时用它。适用于任何项目。
+description: 由你做设计审查和验收，把写代码和跑门禁派给执行后端（Reasonix 或 Codex）的子代理跑。当用户说"帮我做 XXX 功能""改一下 XXX""修 BUG-XXXX"这类需要动代码的活，或直接打 /dev-cycle 时用它。适用于任何项目。
 ---
 
-# 开发全流程（你指挥，Reasonix 执行）
+<!-- 本文件由 claude-reasonix-flow 母仓维护，改动只能单向流：
+     改母仓的 codex/skills/dev-cycle/SKILL.md → 跑 install.ps1 部署 → 副本只同步不修改。
+     在装出去的副本上直接改，下次部署会被覆盖（install.ps1 会先存一份 .bak）。 -->
 
-你是大脑，Reasonix 是手。分工固定，**不许调换**。
+# 开发全流程（你指挥，执行后端干活）
+
+你是大脑，执行后端是手。分工固定，**不许调换**。
 
 > 这份流程有一个 Claude Code 版本（`~/.claude/skills/dev-cycle/SKILL.md`）。
 > 两边规则一致，只有本文件的约束写得更死。改流程时两份都要改。
@@ -24,6 +28,15 @@ description: 由你做设计审查和验收，把写代码和跑门禁派给 Rea
 6. **禁止 `rm -rf`、`git clean` 这类不可恢复删除。** 要删东西先问用户。
 7. **禁止自己发明 `rx.py` 的参数组合。** 下面给的命令行原样复制，只改任务文件名。
 8. **禁止超过 3 轮实现↔验证来回。** 第 3 轮还不绿就停下来问用户。
+9. **禁止自己填 `--model`。** 每个后端各带一个默认模型，`rx.py` 按后端自动换。
+   只有一种情况允许加：implementer 因为**写崩了**被打回过一轮，下一轮升档重派。
+10. **禁止把 `tree=modified` 的那轮验证当数。** `[rx]` 行出现这个词就是验证过程改了源码，
+    整轮作废，必须重跑。
+11. **禁止从空白页即兴写任务书。** 三份模板在
+    `${CODEX_HOME:-$HOME/.codex}/skills/dev-cycle/templates/`，复制过来填空。
+    小节顺序和标题不许改、不许删。
+12. **禁止把 verifier 那张表里「关键输出行」为空的项当 PASS。** 只有命令没有输出，
+    和只写"已执行"是同一种东西——按 `UNAVAILABLE` 处理，让它重跑。
 
 **任何一条撞上了就停下来告诉用户，不要自己想办法绕过去。**
 
@@ -33,33 +46,92 @@ description: 由你做设计审查和验收，把写代码和跑门禁派给 Rea
 
 | 阶段 | 谁做 | 产出（没有产出就是没做） |
 |---|---|---|
-| 0 铺路 | 你 | 项目根有 `reasonix.toml`，且给用户看过 |
+| 0 铺路 | 你 | 后端能跑通（reasonix 后端还要项目根有 `reasonix.toml` 且给用户看过） |
 | 1 摸底 | 你（定位可派 `explore`） | 你**亲自读过**的文件清单 |
 | 2 设计审查 | **你，亲自做** | 六项，逐项成段写进回复 |
-| 3 实现 | Reasonix `implementer` | 改动 + 子代理返回 |
-| 4 验证 | Reasonix `verifier` | 一张 PASS/FAIL/UNAVAILABLE 表 |
+| 3 实现 | 后端的 `implementer` | 改动 + 子代理返回 |
+| 4 验证 | 后端的 `verifier` | 一张 PASS/FAIL/UNAVAILABLE 表，且 `tree=clean` |
 | 5 验收 | 你 | 你**自己复跑过**的那条门禁的输出 |
 | 6 汇报 | 你 | 四块大白话 |
 
 ---
 
-## 怎么调 Reasonix（原样复制，别改参数）
+## 先定后端
+
+有两个执行后端，同一套命令，只差一个 `--backend`：
+
+| | `reasonix` | `codex` |
+|---|---|---|
+| 默认模型 | `flash`（deepseek 档，比你便宜约两个数量级） | `luna`（前沿档，和你同级） |
+| 写崩时的升档 | `--model pro` | `--model sol` |
+| 一次调用的量级 | ~24k 输入 | 十万级输入（多轮工具调用累加） |
+| 权限靠什么兜 | 项目根的 `reasonix.toml` | codex 的 `--sandbox`，**不吃项目配置** |
+| 报得了花费吗 | 报不了 | 报得了（token 数） |
+
+**默认用 reasonix。** 这条流程的经济学建立在"手比脑便宜"上，派一个和你同档的模型去干
+机械活等于没省。**只有下面三种情况才切 codex**，切之前在回复里写明是哪一条：
+
+1. `doctor` 显示 reasonix 那段用不了（CLI 没找到，或 `providers` 是空的）。
+2. deepseek 档已经连着打回两轮还不绿。
+3. 用户明确要求用 codex。
+
+**切后端不改任何分工。** 设计审查仍然是你的，验收仍然要自己复跑，轮数上限仍然是 3。
+
+---
+
+## 怎么调（原样复制，别改参数）
+
+`$CODEX_HOME` 可能没设，所以路径写成带兜底的形式，别简写：
 
 ```bash
-python "$CODEX_HOME/scripts/rx.py" doctor
-python "$CODEX_HOME/scripts/rx.py" sub explore     --max-chars 3000 - < 定位任务文件
-python "$CODEX_HOME/scripts/rx.py" sub implementer --model deepseek/deepseek-v4-pro --max-chars 6000 - < 任务文件
-python "$CODEX_HOME/scripts/rx.py" sub verifier    - < 任务文件
+python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" doctor
+python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub explore     --max-chars 3000 - < 定位任务文件
+python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub implementer --max-chars 6000 - < 任务文件
+python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub verifier    - < 任务文件
 ```
 
-三条硬规则：
+**切 codex 后端就是每条加一个 `--backend codex`，别的一个字都不改**：
+
+```bash
+python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub explore     --backend codex --max-chars 3000 - < 定位任务文件
+python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub implementer --backend codex --max-chars 6000 - < 任务文件
+python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub verifier    --backend codex - < 任务文件
+```
+
+四条硬规则：
 
 - **任务一律写进文件，再用 `-` 从 stdin 传。** 任务文本带中文引号和换行，
   塞进命令行必然被转义搞坏。临时文件写到系统临时目录，**不许写进仓库**。
 - **`verifier` 那条不许加 `--max-chars`。** 它的返回是压缩过的证据，裁掉就等于白跑。
-- **`implementer` 那条不许去掉 `--model`。** 默认档写代码更容易崩，崩一次就多一整轮。
+- **不许自己填 `--model`。** 模型由 `rx.py` 按后端定：reasonix 走 `flash`，codex 走 `luna`。
+  你要做的只是选后端。`[rx]` 行的 `model=` 会告诉你这次实际用的是哪个。
+- **唯一允许升档的时机**：implementer 因为写崩了被打回过一轮（不是任务写虚了、
+  也不是红线没抄全），下一轮加 `--model pro`（reasonix）或 `--model sol`（codex）重派。
+  **打回原因是你自己没写清楚的，升档没用，回去改任务文件。**
 
-### Reasonix 看不见你的对话
+**implementer 一律用后台跑，或者先把宿主的命令超时调到 900 秒以上。**
+实测回流耗时 350~580 秒，三次派活里有一次会撞上宿主默认的超时上限被打断，
+然后你还要额外花几轮去捞输出。verifier 通常一分钟内回来，前台跑就行。
+
+### 任务书：复制模板填空，禁止即兴写
+
+三份模板在 `${CODEX_HOME:-$HOME/.codex}/skills/dev-cycle/templates/`：
+
+| 派谁 | 模板 |
+|---|---|
+| `implementer` | `task-implementer.md` |
+| `verifier` | `task-verifier.md` |
+| `explore` | `task-explore.md` |
+
+复制到临时目录 → 逐个 `<>` 填空 → 删掉顶部注释块 → 派出去。
+
+**小节顺序和标题一个字都不许改**，执行端按这个形状读。某节确实没内容就写"无"，
+**不许整节删掉**——删了执行端就不知道该不该报那件事。
+
+模板的五段骨架是执行端需要的全部：**改哪些文件 → 每处改什么 → 完成标准 →
+验收命令 → 红线**。
+
+### 执行后端看不见你的对话
 
 它是另一个进程、另一个模型，**只能看到你写进任务文件的字**。
 每个任务文件必须自带这五样，缺一样就会跑偏：
@@ -79,12 +151,49 @@ Reasonix 跑 deepseek 档（¥1~¥3 每 M 输入），一次调用合几分钱�
 - **按独立性拆活，不要为了少调用几次硬合并。** 但**互相耦合的必须合并派**：
   B 依赖 A 定下来的接口形状时，拆开会拿到两套不一致的实现。
 - `--max-chars` 裁掉的正文不会丢，完整版落到临时文件，`[rx]` 那行会给路径。
+- **背景材料指路径，禁止抄正文。** 执行后端读得到仓库，写"先读 docs/xxx.md 的 YY 节"
+  远比把那一节抄进任务书便宜。**只有第 2 步得出的约束和红线必须逐条抄全文**
+  ——那些不在任何文档里。
+
+### 成本纪律之二：最贵的是"停下来想"的轮次
+
+2026-08-11 三个派活会话的实测账本：**47% 的轮次不带任何工具调用，吃掉 54% 的输出
+token**。这些轮次里**只有 12% 是写给用户看的字，88% 是推理**——三个会话加起来面向
+用户的正文只有 3,597 字。**所以"汇报写短"几乎省不出东西，要省的是审议轮本身。**
+四条硬规则：
+
+- **任务书必须走模板填空**（见上）。即兴写任务书是最典型的"纯审议 + 长输出"组合，
+  每次都要重新想一遍"该交代什么"。
+- **重验收动作按批做，禁止逐单元跑全档位。** 同型工作单元连续派活时，截图渲染、
+  全量测试这类贵动作每 2~3 个单元集中做一次；迭代中只跑最小档位。
+  逐单元全流程验收是把最贵的动作乘了单元数。
+- **任务跟踪工具只在里程碑用。** 实测占派活会话 8.8% 的输出 token
+  （23 次调用换 27,691 token），换来的只是一份待办清单。检查点粒度就够。
+- **到里程碑就收尾，禁止让会话无限滚厚。** 实测平均每轮重读 99k 上下文。
+  长流水线在里程碑处写完汇报就结束会话，让用户拿检查点结论开新会话续下一段。
+
+**用 codex 后端时这笔账要重算**：那边干活的是前沿档模型，"手比脑便宜"不成立了，
+一次 explore 就能吃掉十几万输入 token。所以在 codex 后端下：**能自己 grep 就不许派
+`explore`**，任务要拆得更细、写得更死，减少它自己摸索的轮数
+（`[rx]` 行的 `cmds=` 就是它跑了多少条命令，数字大就说明任务写得不够死）。
 
 ---
 
 ## 0. 铺路（每个项目只做一次）
 
-先跑 `doctor`，只看两件事：
+先跑 `doctor`。它把两个后端一起查出来，**照你上面选定的那个后端看**。
+
+**codex 后端**：这一步基本没事干，权限由每次调用带的 `--sandbox` 兜，不需要项目级配置。
+只确认 `codex` 那段的 `overall` 是绿的。
+
+`config.load` 报 fail 就**停下来告诉用户**，并且：
+
+- **禁止自己去改用户的 `~/.codex/config.toml`。** 那份是交互式用的，改了会波及桌面端。
+- 正确出路是建一份执行后端专用的 `~/.codex-rx/config.toml`
+  （模板在 `templates/codex-rx.config.toml`），`rx.py` 会自动认这个目录。
+- 那份要填 provider 和密钥，**让用户自己填，你不许碰密钥。**
+
+**reasonix 后端**，只看两件事：
 
 - **`providers` 是空的** → 密钥没配。让用户自己跑 `reasonix setup`。**你不许碰密钥。**
 - **`perm` 的 `allow_rules` 是 0** → 这个项目还没铺过，往下走。
@@ -111,6 +220,8 @@ deny = ['Bash(rm -rf*)', 'Bash(git clean*)', 'Bash(git push*)']
 **写完必须把 `reasonix.toml` 给用户看一眼再往下走。** 这是在给另一个 AI 开权限。
 
 第 1 步的 `explore` 不受这一步阻塞——它是只读的，没铺过也能跑。
+（reasonix 后端下它是 builtin 只读子代理；codex 后端下靠 `roles/explore.md` 这份档案
+加 `--sandbox read-only` 兜，两边都改不了文件。）
 
 ---
 
@@ -183,23 +294,31 @@ deny = ['Bash(rm -rf*)', 'Bash(git clean*)', 'Bash(git push*)']
 
 ## 3. 实现（派 implementer）
 
-```bash
-python "$CODEX_HOME/scripts/rx.py" sub implementer --model deepseek/deepseek-v4-pro --max-chars 6000 - < 任务文件
-```
-
-任务文件按上面"Reasonix 看不见你的对话"那五样写全。**第 3 项红线要逐条抄全文。**
+上面"怎么调"里对应后端的那条命令，原样复制。任务文件按"执行后端看不见你的对话"
+那五样写全。**第 3 项红线要逐条抄全文。**
 
 ---
 
 ## 4. 验证（派 verifier）
 
-```bash
-python "$CODEX_HOME/scripts/rx.py" sub verifier - < 任务文件
-```
+上面"怎么调"里对应后端的那条命令，原样复制。**两个后端都不许加 `--max-chars`。**
 
-`verifier` 没有写文件的工具，改不了源码。把改动范围告诉它，让它按范围决定跑哪些门禁。
+把改动范围告诉它，让它按范围决定跑哪些门禁。
 
 **`implementer` 自己跑过的 lint 不算验证，那只是自查。** 完整验证必须由 `verifier` 独立跑。
+
+### "改不了源码"靠什么保证
+
+两个后端不一样：reasonix 侧靠档案里没给写文件工具；codex 侧给的是 `workspace-write`
+沙箱——**不给写权限门禁自己就跑不起来**（构建产物、测试缓存都要落盘）。
+
+所以真正的保险是 `rx.py` 的工作区哨兵：它在 verifier 跑之前和跑完各取一次 `git diff`
+指纹。**看 `[rx]` 行的 `tree=`**：
+
+- `tree=clean` → 这轮验证有效。
+- `tree=modified` → **验证过程改了源码，整轮作废。** 不许拿它的表当证据。
+  让它重跑一次，或者查清是哪条命令写了文件。
+- 没有 `tree=` 字段 → 不是 git 仓库，哨兵关掉了，这时你要自己多看一眼 `git status`。
 
 ---
 
@@ -208,6 +327,8 @@ python "$CODEX_HOME/scripts/rx.py" sub verifier - < 任务文件
 干活的是另一个模型，它的自我评价不能当证据。
 
 - **每个 PASS 有没有实际命令和输出行？** 只写"已执行""通过"的**当作没跑**。
+  verifier 那张表的「关键输出行」栏必须是命令自己打出来的字（`440 passed`、
+  `All checks passed!`、`EXIT=0`）。**空栏 = 不是 PASS，按 `UNAVAILABLE` 处理。**
 - **无条件自己复跑一条。** 挑一条最能说明本次改动的快门禁（类型检查，或覆盖这次改动的
   那个测试），你自己跑一遍：
 
@@ -222,7 +343,15 @@ python "$CODEX_HOME/scripts/rx.py" sub verifier - < 任务文件
 
 - **第 2 步第 5 项的验证矩阵，每项都有结果了吗？** 漏了补跑。
 - **`UNAVAILABLE` 写清原因了吗？** 没写清就按 `FAIL` 处理。
+- **`[rx]` 行是 `tree=clean` 吗？** 是 `tree=modified` 就整轮作废，重跑，不许往下走。
 - **改动范围超纲了吗？** `git diff --stat` 扫一眼有没有顺手改的无关模块。
+- **implementer 改了既有测试吗？**（它的回流第 4 节）改断言等于动验收标准本身，
+  **必须逐条看过**——偷偷把红的断言改绿，是这条流程唯一防不住的失败。
+  它写"无"而 `git diff` 里有测试文件改动 → 按打回处理。
+- **任务书和现场对不上吗？**（第 6 节）换了解释器、现装了依赖、补了配置文件，
+  都会让验证结论打折扣，逐条判断要不要重验。
+- **临时产物清了吗？**（第 7 节）探针脚本、调试脚本该删的删掉再提交。
+  **子代理不许自己删**（删除要可恢复），所以这一步归你。
 
 ### 有 FAIL 或缺口时
 
@@ -248,8 +377,28 @@ python "$CODEX_HOME/scripts/rx.py" sub verifier - < 任务文件
 3. **怎么用 / 怎么看效果**——具体到点哪里、开哪个东西。
 4. **需要他知道的**——遗留问题、新发现的 Bug。没有就不写这块。
 
-**不要报花费，也不要编花费。** `subagent run` 不支持 `--output-format json`，
-拿不到 usage 信封，`rx.py` 在 `sub` 模式下报不了钱——`[rx]` 那行只有正文规模、
-耗时和退出码。编一个数字出来比不报更糟。
+**最后固定加一行派活账，格式写死，不许省、不许改格式：**
+
+```
+派活账：派活 N 次（implementer A / verifier B / explore C），一次过 M 次，打回 K 次（写崩 X / 任务没写清 Y / 环境不符 Z）。
+```
+
+**打回原因必须分到这三类**，因为三类的处置完全不同：
+
+| 分类 | 意思 | 下一轮怎么办 |
+|---|---|---|
+| 写崩 | 方案没问题，它把代码写错了 | 升档重派（`--model pro` / `--model sol`） |
+| 任务没写清 | 任务书虚、约束没抄全、完成标准不可判定 | **回去改任务文件，升档没用** |
+| 环境不符 | 解释器/依赖/配置和任务书写的对不上 | 补进任务书的「环境」节，重派 |
+
+一次都没打回就写 `一次过 N 次，打回 0 次`。
+**这一行是唯一能让"执行端到底行不行"积累出数字的地方，省一次就断一次。**
+
+**花费按后端分，两种情况都不许编数字：**
+
+- **reasonix 后端：一个字都不要报。** `subagent run` 不支持 `--output-format json`，
+  拿不到 usage 信封，`[rx]` 那行只有正文规模、耗时和退出码。编一个数字比不报更糟。
+- **codex 后端：可以报，但只照抄 `[rx]` 行里的 `in= / cached= / out=` token 数。**
+  **不许自己按单价折算成钱**——你不知道用户走的是哪个计费口。
 
 项目有术语表就按术语表说话，别把内部黑话漏给用户。

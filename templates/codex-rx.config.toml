@@ -1,0 +1,51 @@
+# 执行后端专用的 Codex 家目录配置模板。复制到 ~/.codex-rx/config.toml，填上你自己的 provider。
+#
+# **这个模板会带密钥，填好的那份不要放进任何仓库。** 它住在 ~/.codex-rx/，install.ps1 和
+# capture.ps1 都不碰那个目录，就是为了别把令牌卷进版本控制。
+#
+# ── 什么时候需要它 ────────────────────────────────────────────────────────
+#
+# 不需要的情况：`rx.py doctor` 里 codex 段 `config.load` 是绿的。那说明日常那份
+# ~/.codex/config.toml 命令行也能读，直接用就行，别建这个目录。
+#
+# 需要的情况：`config.load` 报 fail。codex 桌面端和各类 GUI 会往 ~/.codex/config.toml
+# 里写命令行这版 codex-cli 不认的字段（比如 `model_reasoning_effort = "max"`，或者
+# model_catalog_json 指向的目录文件里带了 CLI 不认的推理档），整份配置就加载不了。
+# 那份是交互式用的，不该为了无头调用去改它——建这一份，两边各过各的。
+#
+# 建好之后 rx.py 自动就用它了，命令行不用加任何参数：
+#   --codex-home > DEVCYCLE_CODEX_HOME > ~/.codex-rx（存在就用）> CODEX_HOME > ~/.codex
+#
+# ── 刻意不写的东西 ────────────────────────────────────────────────────────
+#
+# model_catalog_json  没有目录文件 codex 照样跑，而它往往正是加载失败的根源。
+# [mcp_servers.*]     执行角色只要文件和 shell。挂着的 MCP 每次都要连、要塞工具定义，
+#                     连不上还按 startup_timeout 干等。（rx.py 默认也会再关一次）
+# [projects.*]        无头调用每次显式带 -C 和 -s，不吃项目信任表。
+#
+# 实测：同一个定位任务，从日常那份配置（xhigh + MCP + 目录文件）换到这一份，
+# 输入 token 从 83 万降到 9.8 万，耗时从 304 秒降到 76 秒。
+
+service_tier = "default"
+
+# rx.py 每次调用都会用 -m 显式指定模型，这里只是兜底。
+model = "请填你的默认模型"
+
+# 执行角色跑的是已经定好的方案，不需要它自己想太多。medium 是多数模型的原厂默认档。
+# 单次要调高：rx.py ... --codex-config model_reasoning_effort="high"
+model_reasoning_effort = "medium"
+
+model_provider = "请填下面那个 provider 的名字"
+
+# rx.py 每次调用都会用 -s 显式指定沙箱档位（explore 只读、其余可写工作区），
+# 这里只是兜底。**不要写成 danger-full-access。**
+sandbox_mode = "workspace-write"
+
+# 用官方登录（codex login）就把整段删掉，密钥走 ~/.codex-rx/auth.json。
+# 用第三方代理就照抄日常那份 ~/.codex/config.toml 里的对应段落。
+# 注意：这是一份拷贝，代理换了端口或令牌要手动同步一次。
+[model_providers.请填名字]
+name = "显示名"
+base_url = "http://127.0.0.1:端口/v1"
+wire_api = "responses"
+experimental_bearer_token = "请填令牌"
