@@ -43,6 +43,23 @@ allow = [
     # ── 提交，到此为止 ─────────────────────────────────────────────
     'Bash(git add:*)',
     'Bash(git commit:*)',
+
+    # ── 文件写入：这一条**不许删**，删了 implementer 一个字也写不出来 ──
+    #
+    # 症状长这样：`chars=0`、`exit=1`，回流里写着 write_file / bash 全被 declined。
+    # 原因是 `subagent run` 不吃 `--permission-mode`（子代理档案自带权限），
+    # 所以 rx.py 的 `--permission-mode auto` 救不了它，兜底直接落到上面的
+    # mode = "ask"，无头进程没人可问 → blocked。
+    #
+    # 族名是 `Edit(<路径 glob>)`，**不是** `write_file(...)`。Reasonix 把七个写工具
+    # （write_file / edit_file / multi_edit / move_file / notebook_edit /
+    # delete_range / delete_symbol）统一收进 Edit 这一族，审批也按 `Edit(<path>)` 存。
+    # 反过来，读文件那一族**没有**大写别名，只能写 `read_file(...)`。
+    #
+    # 开到 `Edit(**)` 是安全的：Reasonix 的 sandbox 已经把写盘限死在 write_roots
+    # （= 项目根，`reasonix doctor` 里看得见），这条放行出不了仓库；
+    # 真正的红线由下面 deny 段兜——deny > ask > allow，压得住这条。
+    'Edit(**)',
 ]
 
 deny = [
@@ -51,4 +68,22 @@ deny = [
     'Bash(rm -rf*)',
     'Bash(git clean*)',
     'Bash(git push*)',
+
+    # ── 凭据：不许读，也不许写 ─────────────────────────────────────
+    # 上面放了 `Edit(**)`，不堵写这一层就等于让无头子代理能改写甚至清空 .env。
+    # 按项目实际的凭据文件名增删，但**别把这一段整段删掉**。
+    'read_file(.env)',
+    'read_file(**/.env)',
+    'read_file(**/*.key)',
+    'read_file(**/*.pem)',
+    'Edit(.env)',
+    'Edit(**/.env)',
+    'Edit(**/*.key)',
+    'Edit(**/*.pem)',
+
+    # ── .git 内部不许写 ───────────────────────────────────────────
+    # 改 hooks = 拿到「下次提交时任意代码执行」，改 config = 能偷加一个 remote。
+    # 两条都能绕开上面那条「不许 git push」，所以必须一起堵。
+    'Edit(.git/**)',
+    'Edit(**/.git/**)',
 ]

@@ -26,6 +26,10 @@
     reasonix 默认 flash 档、codex 默认 luna。所以命令行里通常一个 --model 都不用写，
     只翻 --backend 就够了。
 
+    **档位也不用你记**：implementer 自动走 pro 档（reasonix）/ sol 档（codex），
+    见 ROLE_MODEL；explore 和 verifier 留在便宜档。派活时不要手写 --model，
+    `[rx]` 行的 model= 会告诉你这次实际用的是哪个。
+
 两个后端都吃的开关：
     --dir PATH         项目根，默认从当前目录往上找 .git / 项目指令文件
     --model REF        覆盖本次的模型。收简称：reasonix 认 flash/pro，codex 认
@@ -36,7 +40,10 @@
     --timeout SEC      墙钟超时，默认 1800
 
 只有 reasonix 吃的：
-    --max-steps N      卡工具调用轮数，防跑飞
+    --max-steps N      卡工具调用轮数，防跑飞。**平时别设**：Reasonix 1.25 起
+                       「agent step limits」已废弃（内置提示 "Deprecated agent step
+                       limits were removed."），不传就是 automatic，等价于传 0。
+                       设成正数只会人为掐断长任务，让它停在半截的 todo 上。
     --permission-mode  manual|ask|auto|acceptEdits|dontAsk|bypassPermissions
                        无头调用不能用 plan（它要交互式会话）
 
@@ -106,6 +113,18 @@ DEFAULT_PERMISSION_MODE = "auto"
 DEFAULT_MODEL = {
     "reasonix": "deepseek/deepseek-v4-flash",
     "codex": "gpt-5.6-luna",
+}
+
+# 角色 → 档位。比 DEFAULT_MODEL 更具体，命中就用它，优先级见 resolve_model。
+# 这张表存在的理由：档位纪律不该靠人在每次派活时记得加 --model。
+#
+# implementer 走 pro：多文件改动上 flash 档会漏改、会把红灯测试直接改绿，
+# 返工一轮要重写任务书 + 重跑门禁，成本远超 pro 那点差价。
+# explore / verifier 留在 flash：一个是撒网找线索、一个是跑命令贴原文，
+# 都不吃推理深度，升档纯属烧钱。
+ROLE_MODEL = {
+    "reasonix": {"implementer": "pro"},
+    "codex": {"implementer": "sol"},
 }
 
 # --model 收简称，省得每次敲全名。表里没有的原样透传给后端，
@@ -232,13 +251,31 @@ def resolve_backend(explicit: str | None) -> str:
     )
 
 
-def resolve_model(backend: str, explicit: str | None) -> str | None:
-    """--model > DEVCYCLE_MODEL_<后端> > DEFAULT_MODEL 表。简称按后端各自的别名表展开。"""
+def resolve_model(backend: str, explicit: str | None, role: str = "") -> str | None:
+    """--model > DEVCYCLE_MODEL_<后端> > ROLE_MODEL[角色] > DEFAULT_MODEL 表。
+
+    简称按后端各自的别名表展开。角色档位排在环境变量之后：显式指定的东西
+    （命令行、环境变量）永远压得过这张表，否则想临时降档就没办法了。
+    """
     name = explicit or os.environ.get(f"DEVCYCLE_MODEL_{backend.upper()}") \
+        or ROLE_MODEL.get(backend, {}).get(role) \
         or DEFAULT_MODEL.get(backend)
     if not name:
         return None
     return MODEL_ALIAS.get(backend, {}).get(name.lower(), name)
+
+
+def role_model_line(backend: str) -> str:
+    """doctor 里那一行：把角色档位显出来，省得靠人记得 implementer 该走 pro。"""
+    overridden = os.environ.get(f"DEVCYCLE_MODEL_{backend.upper()}")
+    if overridden:
+        return (f"全被环境变量 DEVCYCLE_MODEL_{backend.upper()}={overridden} 盖掉了"
+                "（角色档位不生效，想恢复就 unset 它）")
+    roles = ROLE_MODEL.get(backend, {})
+    if not roles:
+        return "无角色特例，全部走上面这个默认档"
+    shown = "，".join(f"{r}={resolve_model(backend, None, r)}" for r in sorted(roles))
+    return f"{shown}；其余角色走上面这个默认档"
 
 
 def find_root(explicit: str | None) -> Path:
@@ -468,7 +505,7 @@ def run_reasonix(args, root: Path) -> int:
         raise SystemExit("plan 模式要求交互式会话，无头调用用不了")
 
     role = args.name if args.mode == "sub" else ""
-    model = resolve_model("reasonix", args.model)
+    model = resolve_model("reasonix", args.model, role)
     guard = role in TREE_GUARDED_ROLES
     before = tree_fingerprint(root) if guard else None
 
@@ -621,7 +658,7 @@ def run_codex(args, root: Path) -> int:
 
     home = codex_home(args.codex_home)
     role = args.name if args.mode == "sub" else ""
-    model = resolve_model("codex", args.model)
+    model = resolve_model("codex", args.model, role)
 
     if role:
         role_file = find_role_file(role, home, args.role_file)
@@ -729,6 +766,7 @@ def doctor_reasonix(root: Path) -> None:
     print(f"  config   : {d.get('config', {}).get('source_path')}")
     print(f"  model    : {resolve_model('reasonix', None)}"
           f"（本桥默认；Reasonix 自己的默认是 {d.get('config', {}).get('default_model')}）")
+    print(f"  档位     : {role_model_line('reasonix')}")
     print(f"  perm     : {d.get('permission')}")
     print(f"  write    : {d.get('sandbox', {}).get('write_roots')}")
     keys = [p["name"] for p in d.get("providers", []) if p.get("key_present")]
@@ -748,6 +786,7 @@ def doctor_codex(root: Path, home: Path, role_file_override: str | None) -> None
         if home == Path.home() / ".codex-rx" else ""
     print(f"  home     : {home}{dedicated}")
     print(f"  model    : {resolve_model('codex', None)}（本桥默认）")
+    print(f"  档位     : {role_model_line('codex')}")
 
     env = os.environ.copy()
     env["CODEX_HOME"] = str(home)

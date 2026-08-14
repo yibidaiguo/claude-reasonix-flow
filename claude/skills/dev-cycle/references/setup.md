@@ -37,7 +37,7 @@ python ~/.claude/scripts/rx.py doctor
 指令文件（`AGENTS.md` / `CLAUDE.md` / `CONTRIBUTING.md`）> `package.json` 的 scripts >
 `Makefile` > `pyproject.toml` > CI 配置（`.github/workflows/`）。
 
-在项目根写：
+在项目根写（完整可抄的版本在 `templates/reasonix.toml`，**优先直接复制那份**）：
 
 ```toml
 [permissions]
@@ -46,13 +46,42 @@ allow = [
     # 这个项目的门禁命令，一条一条列
     # 只读 git：status / diff / log / show / branch / rev-parse / ls-files
     # 提交：git add / git commit（到此为止）
+    'Edit(**)',       # 文件写入，见下一节，漏了这条整条流程就是死的
 ]
 deny = [
     'Bash(rm -rf*)',
     'Bash(git clean*)',
     'Bash(git push*)',
+    'read_file(**/.env)', 'Edit(**/.env)',   # 凭据不许读，也不许写
+    'Edit(.git/**)', 'Edit(**/.git/**)',     # hooks / config 是 push 红线的后门
 ]
 ```
+
+### 最容易漏的一条：文件写入
+
+**`allow` 里没有 `Edit(**)`，`implementer` 就一个字也写不出来。** 这是最贵的一种失败——
+它不报权限错，而是表现成「跑了三分钟、`chars=0`、`exit=1`」，回流里才看得到
+`write_file — declined`。
+
+为什么 `rx.py` 的 `--permission-mode auto` 救不了：**`subagent run` 根本不吃这个参数**
+（子代理档案自带权限），所以兜底直接落回 `mode = "ask"`，无头进程没人可问 → blocked。
+
+**族名别凭感觉写**，写错了不会报错，只会静默不匹配：
+
+| 要放行/禁止的事 | 规则写法 | 别写成 |
+|---|---|---|
+| 改文件（含新建、改、移动、删符号） | `Edit(<glob>)` | ~~`write_file(...)`~~ ~~`Write(...)`~~ |
+| 读文件 | `read_file(<glob>)` | ~~`Read(...)`~~ |
+| 跑命令 | `Bash(<前缀>:*)` | ~~`bash(...)`~~ |
+
+Reasonix 把七个写工具（`write_file` / `edit_file` / `multi_edit` / `move_file` /
+`notebook_edit` / `delete_range` / `delete_symbol`）**统一收进 `Edit` 这一族**，
+审批也是按 `Edit(<path>)` 存的；而读那一族**没有**大写别名。
+
+**开 `Edit(**)` 不算把口子开大**：Reasonix 的 sandbox 已经把写盘限死在 `write_roots`
+（= 项目根，`doctor` 里看得见），这条放行出不了仓库。但**必须同时在 `deny` 里补写侧红线**
+（`Edit(**/.env)`、`Edit(.git/**)`），否则 `Edit(**)` 会把「凭据不进 Git」和
+「不许 push」这两条一起架空——`deny > ask > allow`，deny 压得住。
 
 ### Windows 上两种斜杠都要列
 
@@ -61,6 +90,19 @@ Reasonix 的 bash 工具走 Git Bash，`.venv\Scripts\python.exe` 这种反斜�
 子代理会卡在等审批直到超时。
 
 同一条命令的正反斜杠两种写法都要进 `allow`。
+
+### 写完自己验一次，别假设铺对了
+
+`doctor` 只数规则条数，**不会告诉你族名写错了**。花一毛钱验一次真的无头写入：
+
+```bash
+python ~/.claude/scripts/rx.py sub implementer - <<'EOF'
+在仓库根建一个文件 rx-perm-probe.txt，内容就一行 OK，然后停手。不要跑门禁，不要提交。
+EOF
+```
+
+文件真出现了才算铺通，**验完把探针文件删掉**。回流里出现 `declined` 或者
+`chars=0`，就是 `allow` 里的族名写错了，回上一节对表。
 
 ### 写完给用户看一眼
 

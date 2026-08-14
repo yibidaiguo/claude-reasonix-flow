@@ -33,8 +33,14 @@ python ~/.claude/scripts/rx.py sub implementer --max-chars 6000 - < 任务文件
 python ~/.claude/scripts/rx.py sub verifier    - < 任务文件
 ```
 
-模型不用你操心，每个后端各带一个默认档，`rx.py` 按后端自动换。命令行里不写 `--model`。
-`[rx]` 那行的 `model=` 会告诉你这次实际用的是哪个。
+模型不用你操心，`rx.py` 按**后端 + 角色**自动换档（见它的 `ROLE_MODEL`）：
+**`implementer` 自动走 pro 档**（codex 侧是 sol），`explore` / `verifier` 留在便宜档。
+所以命令行里**不写 `--model`**——写了反而会盖掉这张表。
+`[rx]` 那行的 `model=` 会告诉你这次实际用的是哪个，派完扫一眼：
+**派 implementer 时它不是 pro，就是有人手写了 `--model` 或设了 `DEVCYCLE_MODEL_REASONIX`。**
+
+**不要设 `--max-steps`。** Reasonix 1.25 起 agent step limit 已废弃，不传就是 automatic；
+设成正数只会把长任务人为掐断在半截的 todo 上，回流表现成 `exit=1` 且几乎没有正文。
 
 **任务一律写进文件再用 `-` 从 stdin 传。** 任务文本又长又带中文引号和换行，
 塞进命令行必然被转义搞坏。临时文件写到系统临时目录，别脏了仓库。
@@ -80,10 +86,13 @@ Reasonix 跑 deepseek 档，一次调用的 ~24k 系统提示合几分钱。
   代价是几件事的证据混在一起、返回更长、其中一件出问题时打回的任务文件还得
   把三件事的上下文重写一遍。**但互相耦合的必须合在一起派**——B 依赖 A 定下来的
   接口形状时拆开会拿到两套不一致的实现，那才是真烧钱。
-- **模型档位不用手调，默认就够。** 第一轮所有角色都走后端默认档。
-  **只有一种情况才升档：implementer 被你打回过一轮且原因是它写崩了**（不是任务写虚了、
-  也不是约束没抄全）——这时下一轮加 `--model pro` 重派。
-  **打回原因是你自己没写清楚的，升档没用，回去改任务文件。**
+- **模型档位不用手调，`rx.py` 的 `ROLE_MODEL` 已经按角色定死了。**
+  `implementer` 默认就是 pro 档，`explore` / `verifier` 是便宜档——**别手写 `--model`**。
+  implementer 单独吃 pro 是算过账的：它在多文件改动上用便宜档会漏改、会把红灯测试
+  直接改绿，返工一轮要重写任务书 + 重跑全量门禁，比档位差价贵得多。
+  **反过来，打回原因是你自己任务没写清楚的，升档没用**（它本来就是 pro 了），
+  回去改任务文件。**降档只有一种场景**：确认是纯机械的小改动想省钱，
+  这时才显式加 `--model flash`。
 - **implementer 用 `--max-chars 6000`、explore 用 `--max-chars 3000`**，
   被裁的部分落到临时文件，`[rx]` 那行会给路径，需要细看时再去读。
 - **verifier 不要设 `--max-chars`。** 它的返回本来就是压缩过的（一张表加 FAIL 原文），
@@ -164,8 +173,17 @@ python ~/.claude/scripts/rx.py doctor
 python ~/.claude/scripts/rx.py sub implementer --max-chars 6000 - < 任务文件
 ```
 
-模型走后端默认档，别自己加 `--model`。只有它上一轮**写崩了**被你打回，
-这一轮才升档重派（reasonix 侧 `--model pro`，codex 侧 `--model sol`）。
+**这一步的三条纪律，每次派活都要过一遍**（写在这里是因为只在上面写一次会被稀释）：
+
+1. **不加 `--model`。** `rx.py` 已经把 implementer 钉在 pro 档（codex 侧 sol）。
+   手写 `--model` 只会盖掉它，通常是降档降出来的返工。
+2. **不加 `--max-steps`。** 1.25 起已废弃，不传就是 automatic；设正数会把它掐断在
+   半截的 todo 上，回流是 `exit=1` + 几乎没有正文。
+3. **派完扫一眼 `[rx]` 行的 `model=`**，不是 pro 就说明有人手写了 `--model`
+   或者环境里设了 `DEVCYCLE_MODEL_REASONIX`。
+
+回流是 `chars=0` / `exit=1` / 满屏 `declined` 时，**不是模型不行，是这个项目的
+`reasonix.toml` 缺 `Edit(**)` 放行**——去 `references/setup.md` 的「最容易漏的一条」。
 
 ## 4. 验证（派 verifier）
 
