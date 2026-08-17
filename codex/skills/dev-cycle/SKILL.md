@@ -32,11 +32,13 @@ description: 由你做设计审查和验收，把写代码和跑门禁派给执�
    只有一种情况允许加：implementer 因为**写崩了**被打回过一轮，下一轮升档重派。
 10. **禁止把 `tree=modified` 的那轮验证当数。** `[rx]` 行出现这个词就是验证过程改了源码，
     整轮作废，必须重跑。
-11. **禁止从空白页即兴写任务书。** 三份模板在
+11. **禁止从空白页即兴写任务书。** 四份模板在
     `${CODEX_HOME:-$HOME/.codex}/skills/dev-cycle/templates/`，复制过来填空。
     小节顺序和标题不许改、不许删。
 12. **禁止把 verifier 那张表里「关键输出行」为空的项当 PASS。** 只有命令没有输出，
     和只写"已执行"是同一种东西——按 `UNAVAILABLE` 处理，让它重跑。
+13. **禁止自己用 shell 干下载、装依赖、装工具链这类长输出的活。** 派 `operator`。
+    输出只有几行的除外（`node -v` 这种），分界线是输出长度不是动作类型。
 
 **任何一条撞上了就停下来告诉用户，不要自己想办法绕过去。**
 
@@ -51,6 +53,7 @@ description: 由你做设计审查和验收，把写代码和跑门禁派给执�
 | 2 设计审查 | **你，亲自做** | 六项，逐项成段写进回复 |
 | 3 实现 | 后端的 `implementer` | 改动 + 子代理返回 |
 | 4 验证 | 后端的 `verifier` | 一张 PASS/FAIL/UNAVAILABLE 表，且 `tree=clean` |
+| 杂活（随时） | 后端的 `operator` | 40 行以内的结论（装了什么 / 版本 / 路径 / 证据行） |
 | 5 验收 | 你 | 你**自己复跑过**的那条门禁的输出 |
 | 6 汇报 | 你 | 四块大白话 |
 
@@ -88,6 +91,7 @@ python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" doctor
 python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub explore     --max-chars 3000 - < 定位任务文件
 python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub implementer --max-chars 6000 - < 任务文件
 python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub verifier    - < 任务文件
+python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub operator    --max-chars 1500 - < 杂活任务文件
 ```
 
 **切 codex 后端就是每条加一个 `--backend codex`，别的一个字都不改**：
@@ -96,6 +100,7 @@ python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub verifier    - < 任务文
 python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub explore     --backend codex --max-chars 3000 - < 定位任务文件
 python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub implementer --backend codex --max-chars 6000 - < 任务文件
 python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub verifier    --backend codex - < 任务文件
+python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub operator    --backend codex --max-chars 1500 - < 杂活任务文件
 ```
 
 四条硬规则：
@@ -115,13 +120,14 @@ python "${CODEX_HOME:-$HOME/.codex}/scripts/rx.py" sub verifier    --backend cod
 
 ### 任务书：复制模板填空，禁止即兴写
 
-三份模板在 `${CODEX_HOME:-$HOME/.codex}/skills/dev-cycle/templates/`：
+四份模板在 `${CODEX_HOME:-$HOME/.codex}/skills/dev-cycle/templates/`：
 
 | 派谁 | 模板 |
 |---|---|
 | `implementer` | `task-implementer.md` |
 | `verifier` | `task-verifier.md` |
 | `explore` | `task-explore.md` |
+| `operator` | `task-operator.md` |
 
 复制到临时目录 → 逐个 `<>` 填空 → 删掉顶部注释块 → 派出去。
 
@@ -155,7 +161,32 @@ Reasonix 跑 deepseek 档（¥1~¥3 每 M 输入），一次调用合几分钱�
   远比把那一节抄进任务书便宜。**只有第 2 步得出的约束和红线必须逐条抄全文**
   ——那些不在任何文档里。
 
-### 成本纪律之二：最贵的是"停下来想"的轮次
+### 成本纪律之二：长输出的活一律外派给 operator
+
+**下载文件、装依赖、装工具链、解压、脚手架初始化、批量转换——禁止自己敲 shell。**
+不是你干不了，是这些命令的输出**又长又没信息量**（`npm install` 几百行、下载进度条、
+解压的文件清单），全进你的上下文还要在后续每轮重发。你真正要知道的只有三件事：
+**成没成、什么版本、落在哪个路径。**
+
+`operator` 的档案把回报硬性压在 40 行以内（成功时一行日志都不许贴），
+配 `--max-chars 1500`，几百行的安装输出到你这里只剩几行。**五条硬规则**：
+
+1. **用 `task-operator.md` 模板，「要装 / 要下的东西」那张表逐项写死**——包名、版本号、
+   下载源、落到哪。它被禁止自己挑版本、自己换镜像、自己找下载源，你不写死它只能
+   停下来问回来，白跑一轮。
+2. **禁止给它加 `--model`。** 照着写死的清单装东西不吃推理深度，升档纯属烧钱。
+3. **禁止把改代码的活混进 operator 的任务书。** 那是 `implementer` 的活，分开派。
+4. **回来必须先看第 4 节「动了机器上的什么」。** lockfile 变了、装到项目外面、
+   磁盘吃掉几个 G 都在那节，直接影响后面 `verifier` 的结论算不算数。
+   然后自己扫一眼 `git status --short`。
+5. **要装到机器全局，先问用户。** `operator` 被禁止提权，codex 侧沙箱钉在
+   `workspace-write`。用户点头之后才允许加 `--sandbox danger-full-access` 重派——
+   **禁止不问就加这个开关。**
+
+reasonix 后端下还要确认项目的 `reasonix.toml` 放行了那条安装命令
+（`Bash(npm install:*)`、`Bash(uv:*)` 之类），否则它会卡在等审批直到超时。
+
+### 成本纪律之三：最贵的是"停下来想"的轮次
 
 2026-08-11 三个派活会话的实测账本：**47% 的轮次不带任何工具调用，吃掉 54% 的输出
 token**。这些轮次里**只有 12% 是写给用户看的字，88% 是推理**——三个会话加起来面向
@@ -380,7 +411,7 @@ deny = ['Bash(rm -rf*)', 'Bash(git clean*)', 'Bash(git push*)']
 **最后固定加一行派活账，格式写死，不许省、不许改格式：**
 
 ```
-派活账：派活 N 次（implementer A / verifier B / explore C），一次过 M 次，打回 K 次（写崩 X / 任务没写清 Y / 环境不符 Z）。
+派活账：派活 N 次（implementer A / verifier B / explore C / operator D），一次过 M 次，打回 K 次（写崩 X / 任务没写清 Y / 环境不符 Z）。
 ```
 
 **打回原因必须分到这三类**，因为三类的处置完全不同：

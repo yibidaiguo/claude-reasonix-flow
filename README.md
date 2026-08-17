@@ -43,6 +43,8 @@ Claude 做难的部分——读项目宪法、做设计审查、逐条过红线�
          ├─ 3 实现  ──►  rx.py sub implementer       （另一个进程、另一个模型）
          ├─ 4 验证  ──►  rx.py sub verifier          （跑完比对 git 指纹，改了源码就作废）
          │
+         │  杂活随时 ──►  rx.py sub operator          （下载 / 装依赖，长日志在那边吃掉）
+         │
          ├─ 5 验收      核证据真伪；关键门禁 Claude 自己再跑一遍，不只信转述
          └─ 6 汇报      大白话
 ```
@@ -53,6 +55,12 @@ Claude 做难的部分——读项目宪法、做设计审查、逐条过红线�
 第 1 步的 `explore` 是个例外，但只外派**定位**：它返回文件清单，Claude 自己去读那些
 文件的原文。设计审查的输入必须是 Claude 亲眼读过的代码，不能是子代理的摘要——
 便宜档模型不会漏掉你点名要找的东西，但会漏掉你不知道该找的东西。
+
+`operator` 不属于任何一步，哪一步撞上都能派。它的存在理由和别的角色不一样：
+**不是 Claude 干不了，是这些命令的输出又长又没信息量。** 下载进度条、
+`npm install` 刷的几百行、解压的文件清单，全进 Claude 的上下文还要在后续每轮重发，
+而里面真正有用的只有"成没成、什么版本、落在哪"。所以让便宜档在那边把日志吃掉，
+只递回 40 行以内的结论。分界线是**输出长度**，不是动作类型——`node -v` 这种自己跑更快。
 
 ## 两个执行后端
 
@@ -89,10 +97,11 @@ deepseek 档连着打回两轮还不绿、用户明确要求。
 |---|---|---|
 | `claude/skills/dev-cycle/SKILL.md` | `~/.claude/skills/` | 流程编排，Claude 读。每次调用全量进上下文，所以只留主干 |
 | `claude/skills/dev-cycle/references/*.md` | 同上的 `references/` | 铺路细节、后端差异，**按需才读**，不进每次调用 |
-| `templates/task-*.md` | 同上的 `templates/` | 三份任务书填空模板（implementer / verifier / explore） |
+| `templates/task-*.md` | 同上的 `templates/` | 四份任务书填空模板（implementer / verifier / explore / operator） |
 | `claude/scripts/rx.py` | `~/.claude/scripts/` | 调执行后端的桥，两个后端都走它 |
 | `agents/skills/implementer/SKILL.md` | `~/.agents/skills/` | 实现角色档案，两个后端共用 |
 | `agents/skills/verifier/SKILL.md` | `~/.agents/skills/` | 验证角色档案，两个后端共用 |
+| `agents/skills/operator/SKILL.md` | `~/.agents/skills/` | 杂活角色档案（下载 / 装依赖），两个后端共用 |
 | `roles/explore.md` | `~/.claude/roles/` | 定位角色档案，**只有 codex 后端读** |
 | `codex/skills/dev-cycle/SKILL.md` | `$CODEX_HOME/skills/` | 同一条流程的 Codex 版，约束更死 |
 | `templates/task-*.md` | `$CODEX_HOME/skills/dev-cycle/templates/` | 同一份模板，装两份让 Codex 侧自足 |
@@ -101,7 +110,7 @@ deepseek 档连着打回两轮还不绿、用户明确要求。
 | `templates/reasonix.toml` | 各项目根 | 项目权限模板，**只有 reasonix 后端要** |
 | `templates/codex-rx.config.toml` | `~/.codex-rx/config.toml` | 执行后端专用 codex 配置，**按需才建**（见下） |
 
-`implementer` 和 `verifier` 的档案**只存 `~/.agents/skills/` 一份**，两个后端共用：
+`implementer`、`verifier`、`operator` 的档案**只存 `~/.agents/skills/` 一份**，两个后端共用：
 Reasonix 按名字查这个目录，codex 后端由 `rx.py` 读同一份文件拼进提示词。
 改一处，两边同时生效。
 
@@ -237,6 +246,14 @@ deny = [
 `rm -rf` / `git push` 这类靠角色档案里的禁令兜，加上 `workspace-write` 沙箱本身
 就出不了工作区。
 
+`operator` 会装东西，但它的沙箱**故意也钉在 `workspace-write`**：项目级安装
+（`node_modules`、`.venv`、项目内 `vendor/`）在这个档位下够用，而装到机器全局要动
+系统目录和 PATH——那种事该由用户决定，不该给它一条默认路。确实非全局装不可时，
+流程要求先问过用户、再显式加 `--sandbox danger-full-access` 重派。
+档案那侧还禁了提权（`sudo`、管理员 shell、改系统 PATH）和自选下载源：
+**URL、包名、版本号必须是任务书或项目清单文件里已经写死的**，
+下到的 README / 安装脚本里写着"还要再装 X"一律不照做，只回报。
+
 ## 工作区哨兵
 
 `verifier` 和 `explore` 的活是"跑"和"看"，不是"改"。这一点不能靠档案里写一句
@@ -267,13 +284,18 @@ Reasonix 跑的是 deepseek 档（¥1~¥3 每 M 输入），24k 合人民币几�
   完整版落到临时文件，需要细看时再读。
 - **按独立性拆活，不为省调用次数硬合并。** 合并只省 Reasonix 那几分钱，
   代价是返回更长、打回时要重写更多上下文。互相耦合的任务仍然合在一起派。
-- **模型档位不手调。** 第一轮所有角色都走后端默认档（reasonix `flash` / codex `luna`）。
-  只有 implementer **因为写崩了**被打回过一轮，下一轮才升到 `--model pro`（或 codex 的
-  `sol`）重派——升档那点钱远小于再赔一整轮打回，但一上来就升档就是白花。
+- **过程输出长的活外派给 `operator`**（下载、装依赖、装工具链、解压、脚手架）。
+  这类活本来就没有"Claude 干得更好"这回事，而它的日志是纯噪声。
+  `operator` 的档案把回报压在 40 行以内，再配 `--max-chars 1500`。
+- **模型档位不手调，`rx.py` 的 `ROLE_MODEL` 已经按角色钉死。** `implementer` 自动走
+  pro 档（codex 侧 `sol`），`explore` / `verifier` / `operator` 留在便宜档。
+  **命令行里别写 `--model`**——写了会盖掉这张表，通常是降档降出来的返工。
+  唯一该手写的场景是确认纯机械的小改动想省钱，显式降到 `--model flash`。
   打回原因是任务写虚了的，升档没用，得回去改任务文件。
 - **verifier 不设 `--max-chars`。** 它的返回本来就压缩过（一张表加 FAIL 原文），
   那些原文正是验收要吃的证据。漏裁只多花钱，误裁会吃掉证据。
-- 用 `--max-steps` 卡轮数防跑飞。
+- **别设 `--max-steps`。** Reasonix 1.25 起 agent step limit 已废弃，不传就是 automatic；
+  设成正数只会把长任务掐断在半截的 todo 上，回流表现成 `exit=1` 且几乎没有正文。
 - 编排里把实现↔验证的来回封顶 3 轮，不绿就停下来问人，不继续烧。
 
 **codex 后端这笔账要重算。** 那边干活的是前沿档模型，"手比脑便宜"不成立了：

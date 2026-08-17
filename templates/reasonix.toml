@@ -31,6 +31,16 @@ allow = [
     # 'Bash(go test:*)',
     # 'Bash(go vet:*)',
 
+    # ── 装依赖：要派 operator 才需要，按实际包管理器留一两条 ───────────
+    #
+    # 不放行的症状和写入被拦一样：跑很久、chars=0——它卡在等审批直到超时。
+    # **别图省事写 `Bash(*)`**，那等于把 deny 之外的一切都开了。
+    #
+    # 'Bash(npm install:*)',
+    # 'Bash(npm ci:*)',
+    # 'Bash(uv:*)',
+    # 'Bash(pip install:*)',
+
     # ── 只读 git，基本每个项目都要 ──────────────────────────────────
     'Bash(git status:*)',
     'Bash(git diff:*)',

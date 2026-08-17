@@ -18,6 +18,7 @@ description: Claude 做设计审查和验收，把实现与跑门禁派给执行
 | 2 设计审查 | **你，亲自做，不许外派** | 这是整条流程存在的理由 |
 | 3 实现 | 后端的 `implementer` | 方案定死之后是执行题 |
 | 4 验证 | 后端的 `verifier` | 跑命令贴结果，机械活 |
+| 杂活（随时） | 后端的 `operator` | 下载、装依赖、装工具的长日志不该进你的上下文 |
 | 5 验收 | 你 | 换了个模型在干活，更不能只看它自己怎么说 |
 | 6 汇报 | 你 | 说人话 |
 
@@ -31,6 +32,7 @@ python ~/.claude/scripts/rx.py doctor                    # 自检，不花钱，
 python ~/.claude/scripts/rx.py sub explore     --max-chars 3000 - < 定位任务文件
 python ~/.claude/scripts/rx.py sub implementer --max-chars 6000 - < 任务文件
 python ~/.claude/scripts/rx.py sub verifier    - < 任务文件
+python ~/.claude/scripts/rx.py sub operator    --max-chars 1500 - < 杂活任务文件
 ```
 
 模型不用你操心，`rx.py` 按**后端 + 角色**自动换档（见它的 `ROLE_MODEL`）：
@@ -51,13 +53,14 @@ python ~/.claude/scripts/rx.py sub verifier    - < 任务文件
 
 ## 任务书：复制模板填空，不要即兴写
 
-三份模板在 `~/.claude/skills/dev-cycle/templates/`：
+四份模板在 `~/.claude/skills/dev-cycle/templates/`：
 
 | 派谁 | 模板 |
 |---|---|
 | `implementer` | `task-implementer.md` |
 | `verifier` | `task-verifier.md` |
 | `explore` | `task-explore.md` |
+| `operator` | `task-operator.md` |
 
 复制到临时目录 → 逐个 `<>` 填空 → 删掉顶部注释块 → 派出去。
 **小节顺序和标题不许改**，执行端按这个形状读。
@@ -97,6 +100,36 @@ Reasonix 跑 deepseek 档，一次调用的 ~24k 系统提示合几分钱。
   被裁的部分落到临时文件，`[rx]` 那行会给路径，需要细看时再去读。
 - **verifier 不要设 `--max-chars`。** 它的返回本来就是压缩过的（一张表加 FAIL 原文），
   而那些原文正是你验收要吃的证据，裁掉就等于白跑。
+
+### 过程输出长的活，别自己用 Bash 干
+
+**下载文件、装依赖、装工具链、解压、脚手架初始化、批量转换——这些一律派 `operator`，
+不要自己敲 Bash。** 理由不是你干不了，是这些命令的输出**又长又没有信息量**：
+`npm install` 刷几百行、下载进度条几十行、解压把文件名一个个列出来。
+这些字全进你的上下文，还会在后续每一轮重发。你从里面真正要知道的只有三件事：
+**装成了没有、版本是多少、落在哪个路径。**
+
+`operator` 的档案把回报硬性压在 40 行以内（成功时一行日志都不许贴），
+再配 `--max-chars 1500`，一次几百行的安装输出到你这里就剩几行。
+
+- **它走便宜档**（`rx.py` 没给它设角色档位，跟着后端默认走），照着写死的清单装东西
+  不吃推理深度。**别给它加 `--model`。**
+- **用 `task-operator.md` 模板。** 要装什么、什么版本、从哪来、落到哪，
+  在「要装 / 要下的东西」那张表里**逐项写死**——它被禁止自己挑版本、自己换镜像、
+  自己找下载源，你不写死它就只能停下来问回来，白跑一轮。
+- **它不写业务代码。** 要改代码就是 `implementer` 的活，别混在一份任务书里派。
+- **回来先看第 4 节「动了机器上的什么」。** lockfile 变了、装到项目外面去了、
+  磁盘吃掉几个 G，都在那节。这直接影响后面 `verifier` 的结论算不算数——
+  `git status` 你自己再扫一眼。
+- **要装到机器全局时先问用户。** `operator` 被禁止提权，codex 侧的沙箱也钉在
+  `workspace-write`。确实非全局装不可，先跟用户说清楚装什么、装哪，
+  他点头之后再加 `--sandbox danger-full-access` 重派。
+- **reasonix 后端下，项目的 `reasonix.toml` 得放行那条安装命令**
+  （`Bash(npm install:*)`、`Bash(uv:*)` 之类），否则它会卡在等审批直到超时。
+  规则怎么写见 `references/setup.md`。
+
+**例外**：一条命令、输出就几行的事（`pip show xxx`、`node -v`），自己跑更快，
+派活的往返比省下来的多。**分界线是输出长度，不是动作类型。**
 
 ### 最贵的是「停下来想」的轮次，不是写出来的字
 
@@ -240,7 +273,7 @@ python ~/.claude/scripts/rx.py sub verifier - < 任务文件      # 注意：不
 最后固定加一行**派活账**，格式写死：
 
 ```
-派活账：派活 N 次（implementer A / verifier B / explore C），一次过 M 次，打回 K 次（写崩 X / 任务没写清 Y / 环境不符 Z）。
+派活账：派活 N 次（implementer A / verifier B / explore C / operator D），一次过 M 次，打回 K 次（写崩 X / 任务没写清 Y / 环境不符 Z）。
 ```
 
 **打回原因必须分类**，三类的处置完全不同：写崩了 → 下一轮升档；任务没写清 → 回去改

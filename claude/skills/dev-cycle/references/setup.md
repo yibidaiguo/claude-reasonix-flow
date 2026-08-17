@@ -83,6 +83,25 @@ Reasonix 把七个写工具（`write_file` / `edit_file` / `multi_edit` / `move_
 （`Edit(**/.env)`、`Edit(.git/**)`），否则 `Edit(**)` 会把「凭据不进 Git」和
 「不许 push」这两条一起架空——`deny > ask > allow`，deny 压得住。
 
+### 要派 operator 就得放行安装命令
+
+`operator` 干的是下载和装依赖，那些命令不在门禁清单里，**默认没人给它放行**。
+派出去会卡在等审批直到超时——表现和写入被拦一样：跑很久、`chars=0`。
+
+按这个项目实际用的包管理器补几条，只补它真会用到的：
+
+```toml
+allow = [
+    'Bash(npm install:*)', 'Bash(npm ci:*)', 'Bash(pnpm install:*)',
+    'Bash(uv:*)', 'Bash(pip install:*)', 'Bash(curl:*)',
+]
+```
+
+**别图省事写 `Bash(*)`**。那等于把 deny 之外的一切都开了，
+`operator` 的"不提权、不换源"就只剩档案里那句话在兜。
+
+装到机器全局的东西不归这条管——`operator` 被禁止提权，那种事先问用户。
+
 ### Windows 上两种斜杠都要列
 
 Reasonix 的 bash 工具走 Git Bash，`.venv\Scripts\python.exe` 这种反斜杠路径会被 shell

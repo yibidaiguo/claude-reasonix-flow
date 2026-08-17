@@ -10,7 +10,7 @@ $home_ = [Environment]::GetFolderPath("UserProfile")
 $codexHome = $env:CODEX_HOME
 if (-not $codexHome) { $codexHome = Join-Path $home_ ".codex" }
 
-# implementer / verifier 的档案只装 ~/.agents/skills/ 一份，两个执行后端共用：
+# implementer / verifier / operator 的档案只装 ~/.agents/skills/ 一份，两个执行后端共用：
 # Reasonix 按名字查这个目录，codex 后端由 rx.py 读同一份文件拼进提示词。
 #
 # explore 是例外——Reasonix 自带 builtin explore，档案装进 ~/.agents/skills/ 会盖掉它，
@@ -24,9 +24,11 @@ $pairs = @(
     @{ src = "templates\task-implementer.md";         root = $home_;     dst = ".claude\skills\dev-cycle\templates\task-implementer.md" },
     @{ src = "templates\task-verifier.md";            root = $home_;     dst = ".claude\skills\dev-cycle\templates\task-verifier.md" },
     @{ src = "templates\task-explore.md";             root = $home_;     dst = ".claude\skills\dev-cycle\templates\task-explore.md" },
+    @{ src = "templates\task-operator.md";            root = $home_;     dst = ".claude\skills\dev-cycle\templates\task-operator.md" },
     @{ src = "claude\scripts\rx.py";                  root = $home_;     dst = ".claude\scripts\rx.py" },
     @{ src = "agents\skills\implementer\SKILL.md";    root = $home_;     dst = ".agents\skills\implementer\SKILL.md" },
     @{ src = "agents\skills\verifier\SKILL.md";       root = $home_;     dst = ".agents\skills\verifier\SKILL.md" },
+    @{ src = "agents\skills\operator\SKILL.md";       root = $home_;     dst = ".agents\skills\operator\SKILL.md" },
     @{ src = "roles\explore.md";                      root = $home_;     dst = ".claude\roles\explore.md" },
 
     # Codex 侧。rx.py、explore 档案和模板各装两份，让 Codex 那边不依赖 ~/.claude 是否存在。
@@ -34,6 +36,7 @@ $pairs = @(
     @{ src = "templates\task-implementer.md";         root = $codexHome; dst = "skills\dev-cycle\templates\task-implementer.md"; codex = $true },
     @{ src = "templates\task-verifier.md";            root = $codexHome; dst = "skills\dev-cycle\templates\task-verifier.md";    codex = $true },
     @{ src = "templates\task-explore.md";             root = $codexHome; dst = "skills\dev-cycle\templates\task-explore.md";     codex = $true },
+    @{ src = "templates\task-operator.md";            root = $codexHome; dst = "skills\dev-cycle\templates\task-operator.md";    codex = $true },
     @{ src = "claude\scripts\rx.py";                  root = $codexHome; dst = "scripts\rx.py";              codex = $true },
     @{ src = "roles\explore.md";                      root = $codexHome; dst = "roles\explore.md";           codex = $true }
 )

@@ -11,6 +11,7 @@
 用法：
     python ~/.claude/scripts/rx.py sub implementer - < 任务文件
     python ~/.claude/scripts/rx.py sub verifier   - < 任务文件
+    python ~/.claude/scripts/rx.py sub operator   - < 任务文件   # 下载 / 装依赖这类杂活
     python ~/.claude/scripts/rx.py run            - < 任务文件
     python ~/.claude/scripts/rx.py doctor                  # 环境自检，不花钱
 
@@ -63,7 +64,7 @@ codex 侧的角色档案按这个顺序找（第一个存在的赢）：
     --role-file → $DEVCYCLE_ROLES/<角色>.md → ~/.agents/skills/<角色>/SKILL.md
     → $CODEX_HOME/roles/<角色>.md → ~/.claude/roles/<角色>.md → <本脚本>/../roles/<角色>.md
 
-implementer 和 verifier 的档案两个后端共用 ~/.agents/skills/ 那份，不另存一遍，
+implementer / verifier / operator 的档案两个后端共用 ~/.agents/skills/ 那份，不另存一遍，
 省得改一处漏一处。explore 是例外：Reasonix 自带 builtin explore，档案只为 codex 准备，
 所以放在 roles/ 里，不进 ~/.agents/skills/（放进去会盖掉 Reasonix 的 builtin）。
 
@@ -120,8 +121,9 @@ DEFAULT_MODEL = {
 #
 # implementer 走 pro：多文件改动上 flash 档会漏改、会把红灯测试直接改绿，
 # 返工一轮要重写任务书 + 重跑门禁，成本远超 pro 那点差价。
-# explore / verifier 留在 flash：一个是撒网找线索、一个是跑命令贴原文，
-# 都不吃推理深度，升档纯属烧钱。
+# explore / verifier / operator 留在 flash：找线索、跑命令贴原文、照着写死的清单装东西，
+# 都不吃推理深度，升档纯属烧钱。operator 尤其——它存在的理由就是吃掉长日志，
+# 用贵档去吃日志等于没省。
 ROLE_MODEL = {
     "reasonix": {"implementer": "pro"},
     "codex": {"implementer": "sol"},
@@ -148,10 +150,16 @@ MODEL_ALIAS = {
 # .pytest_cache、node_modules/.cache），read-only 会把正经门禁一起拦死，那就白跑了。
 # 「不许改源码」这条改由跑完的 git 指纹比对来兜（见 tree_fingerprint），
 # 那比沙箱档位更贴合真实要求——允许写缓存，但改了源码一定被抓出来。
+#
+# operator 也是 workspace-write，**故意不给 danger-full-access**：项目级安装
+# （node_modules、.venv、项目内 vendor/）在这个档位下够用，而装到机器全局要动
+# 系统目录和 PATH，那种事该由用户自己决定。确实非全局装不可时，派活方显式加
+# --sandbox danger-full-access 并且先问过用户——不给这条默认路。
 CODEX_ROLE_SANDBOX = {
     "explore": "read-only",
     "verifier": "workspace-write",
     "implementer": "workspace-write",
+    "operator": "workspace-write",
 }
 DEFAULT_CODEX_SANDBOX = "workspace-write"
 
@@ -818,7 +826,7 @@ def doctor_codex(root: Path, home: Path, role_file_override: str | None) -> None
     # config.toml 加载不了是最常见也最难自己看出来的坑：GUI 写进去的字段，
     # 命令行这版 codex 不一定认。上面 doctor 的 config.load 会报，这里再钉一句出路。
     print("  roles    :")
-    for role in ("implementer", "verifier", "explore"):
+    for role in ("implementer", "verifier", "explore", "operator"):
         try:
             p = find_role_file(role, home, role_file_override)
             print(f"    {role:<12}: {p}")
